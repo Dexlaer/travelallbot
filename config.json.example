@@ -60,7 +60,6 @@
   ],
   "tours": {
     "enabled": true,
-    "departure_city_id": 2,
     "transfer_to_moscow_two": 12000,
     "min_rating": 4.0,
     "nights_from": 7,
@@ -73,6 +72,11 @@
       "Шри-Ланка": 110,
       "Филиппины": 97
     },
-    "min_plausible_per_person": 30000
+    "min_plausible_per_person": 30000,
+    "departure_city_ids": {
+      "AER": 67,
+      "MRV": 44,
+      "MOW": 2
+    }
   }
 }

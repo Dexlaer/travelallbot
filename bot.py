@@ -129,7 +129,7 @@ def latest_rows():
         if d["kind"] == "tour":
             if "#" not in d["dest"]:
                 continue                      # легаси-строки до мульти-источников
-            d["src"] = d["dest"].split("#", 1)[1]
+            d["src"] = d["dest"].split("#", 1)[1].split("@", 1)[0]
         d["median"] = hunter.median_before(con, d["kind"], d["origin"], d["dest"])
         rows.append(d)
     return rows

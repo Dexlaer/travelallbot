@@ -241,7 +241,7 @@ def feeder_flight(checkin_str, nights, pax):
     info = f"{rub(price)} ({d[5:]}→{r[5:]}{dur_s})"
     return price, info
 
-def recheck_tour(cid, t, pax, offer):
+def recheck_tour(cid, t, pax, offer, city_id=2):
     """перепроверка подозрительно дешёвого тура: повторяем точечный запрос
        (тот же отель, дата заезда, ночи) — повторилось свежим = похоже на правду"""
     ci = str(offer.get("checkinDate") or "")
@@ -250,7 +250,7 @@ def recheck_tour(cid, t, pax, offer):
     if not (ci and nights and hid):
         return False
     url = ("https://api-gateway.travelata.ru/statistic/cheapestTours"
-           f"?countries[]={cid}&departureCity={t.get('departure_city_id',2)}"
+           f"?countries[]={cid}&departureCity={city_id}"
            f"&nightRange[from]={nights}&nightRange[to]={nights}"
            f"&touristGroup[adults]={pax}&touristGroup[kids]=0&touristGroup[infants]=0"
            f"&checkInDateRange[from]={ci}&checkInDateRange[to]={ci}")
@@ -307,9 +307,17 @@ def _tours_travelata(con):
     d_from = start.isoformat()
     d_to = (start + datetime.timedelta(days=28)).isoformat()   # лимит Travelata: окно <=30 дней
     addon = t.get("transfer_to_moscow_two", 0)
-    for cname, cid in t["countries"].items():
+    # вылеты: прямой из дома (Сочи=67/Минводы=44) И из Москвы (2) с подлётом
+    home = CFG.get("home", "AER")
+    city_ids = t.get("departure_city_ids", {"AER": 67, "MRV": 44, "MOW": 2})
+    runs = []
+    if home in city_ids:
+        runs.append((home, city_ids[home], False))      # прямой, подлёт не нужен
+    runs.append(("MOW", city_ids.get("MOW", 2), True))  # Москва + подлёт
+    for (cname, cid), (orig, city_id, need_feeder) in \
+            [(c, r) for c in t["countries"].items() for r in runs]:
         url = ("https://api-gateway.travelata.ru/statistic/cheapestTours"
-               f"?countries[]={cid}&departureCity={t.get('departure_city_id',2)}"
+               f"?countries[]={cid}&departureCity={city_id}"
                f"&nightRange[from]={t.get('nights_from',7)}&nightRange[to]={t.get('nights_to',12)}"
                f"&touristGroup[adults]={pax}&touristGroup[kids]=0&touristGroup[infants]=0"
                f"&checkInDateRange[from]={d_from}&checkInDateRange[to]={d_to}")
@@ -342,7 +350,7 @@ def _tours_travelata(con):
         # свежим точечным запросом (отсекает протухшие записи)
         batch_med = statistics.median([x["price"] for x in data])
         hot = [x for x in susp[:2]
-               if x["price"] >= batch_med * 0.4 and recheck_tour(cid, t, pax, x)]
+               if x["price"] >= batch_med * 0.4 and recheck_tour(cid, t, pax, x, city_id)]
         note = ""
         if hot:
             best = min(hot, key=lambda x: x["price"])
@@ -358,23 +366,27 @@ def _tours_travelata(con):
             best = min(good or normal, key=lambda x: x["price"])
             if not good:
                 note = " ⚠️отель так себе"
-        # реальный подлёт из дома (Сочи) под даты этого тура
-        fp, finfo = feeder_flight(best.get("checkinDate"), best.get("nights"), pax)
-        if fp:
-            total = best["price"] + fp
-            add_str = f"подлёт {oname(CFG.get('home','AER'))}⇄МСК {finfo}"
+        if not need_feeder:
+            total = best["price"]
+            add_str = f"ПРЯМОЙ вылет из {oname(orig)}, без подлёта"
         else:
-            est = int(addon / 2 * pax)
-            total = best["price"] + est
-            add_str = f"подлёт ≈{rub(est)} (билеты под даты не нашлись)"
+            # реальный подлёт из дома (Сочи) под даты этого тура
+            fp, finfo = feeder_flight(best.get("checkinDate"), best.get("nights"), pax)
+            if fp:
+                total = best["price"] + fp
+                add_str = f"подлёт {oname(CFG.get('home','AER'))}⇄МСК {finfo}"
+            else:
+                est = int(addon / 2 * pax)
+                total = best["price"] + est
+                add_str = f"подлёт ≈{rub(est)} (билеты под даты не нашлись)"
         info = (f"{best.get('hotelCategoryName','')} {(best.get('hotelName') or '')[:20]}"
                 f" ★{str(best.get('hotelRating') or '?')[:3]}, {best.get('nights')}н"
                 f" (тур {rub(best['price'])} + {add_str}){note}")
-        dest_key = f"{cname}#{SRC}"          # история цен — отдельно на источник
-        med = median_before(con, "tour", "MOW", dest_key)
-        _insert(con, "tour", "MOW", dest_key, cname, total, 0,
+        dest_key = f"{cname}#{SRC}@{orig}"   # история: страна × источник × город вылета
+        med = median_before(con, "tour", orig, dest_key)
+        _insert(con, "tour", orig, dest_key, cname, total, 0,
                 str(best.get("checkinDate")), "", info, best.get("tourPageUrl", ""))
-        found.append(dict(kind="tour", origin="MOW", dest=dest_key, label=cname, src=SRC,
+        found.append(dict(kind="tour", origin=orig, dest=dest_key, label=cname, src=SRC,
             price_two=total, transfers=0, depart=str(best.get("checkinDate")), ret="",
             info=info, url=best.get("tourPageUrl", ""), median=med))
     con.commit()
@@ -463,17 +475,17 @@ def build_map(flights, tours, chains=None):
                 line += f"\n   🛋 удобный: {rub(c['price_two'])}"
             L.append(line)
     if tours:
-        home = oname(CFG.get("home", "AER"))
         L.append("\n━━ 🏨 ПАКЕТНЫЕ ТУРЫ (перелёт+отель+трансфер) ━━")
-        L.append(f"   в цене РЕАЛЬНЫЕ билеты {home}⇄Москва под даты тура")
-        best_by = {}                          # min по стране среди источников
+        L.append("   цена итоговая от точки старта: прямой вылет или МСК+подлёт")
+        best_by = {}                # min по стране среди источников и городов вылета
         for t in tours:
             if (t["label"] not in best_by
                     or t["price_two"] < best_by[t["label"]]["price_two"]):
                 best_by[t["label"]] = t
         for t in sorted(best_by.values(), key=lambda x: x["price_two"]):
             emj, _, _ = season_state(TOUR_DEST.get(t["label"], ""))
-            src = f" · {t['src']}" if t.get("src") else ""
+            how = ("✈ из " + oname(t["origin"])) if t.get("origin") != "MOW" else "МСК+подлёт"
+            src = f" · {t['src']}, {how}" if t.get("src") else f" · {how}"
             L.append(f"{emj} {t['label']:<13}{rub(t['price_two']):>10}  "
                      f"{arrow(t['price_two'], t['median'])}{src}")
     if chains:

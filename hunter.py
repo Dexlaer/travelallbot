@@ -272,10 +272,25 @@ def recheck_tour(cid, t, pax, offer):
             pass
     return False
 
-# ---- скан туров (Travelata): только приличные отели ----
+# ---- скан туров: мульти-источник ----
 def scan_tours(con):
+    """собирает туры со всех подключённых источников.
+       сейчас живой источник — Travelata; Level.Travel и Слетать.ру
+       включатся автоматически, когда в secrets.json появятся их ключи."""
     t = CFG.get("tours", {})
-    if not t.get("enabled") or not t.get("countries"):
+    if not t.get("enabled"):
+        return []
+    found = _tours_travelata(con)
+    if SEC.get("leveltravel_api_key"):
+        print("  · Level.Travel: ключ есть, интеграция в работе — скажи Клоду, он встроит")
+    if SEC.get("sletat_key"):
+        print("  · Слетать.ру: ключ есть, интеграция в работе — скажи Клоду, он встроит")
+    return found
+
+def _tours_travelata(con):
+    SRC = "Travelata"
+    t = CFG.get("tours", {})
+    if not t.get("countries"):
         return []
     found = []
     pax = CFG.get("passengers", 2)
@@ -355,10 +370,11 @@ def scan_tours(con):
         info = (f"{best.get('hotelCategoryName','')} {(best.get('hotelName') or '')[:20]}"
                 f" ★{str(best.get('hotelRating') or '?')[:3]}, {best.get('nights')}н"
                 f" (тур {rub(best['price'])} + {add_str}){note}")
-        med = median_before(con, "tour", "MOW", cname)
-        _insert(con, "tour", "MOW", cname, cname, total, 0,
+        dest_key = f"{cname}#{SRC}"          # история цен — отдельно на источник
+        med = median_before(con, "tour", "MOW", dest_key)
+        _insert(con, "tour", "MOW", dest_key, cname, total, 0,
                 str(best.get("checkinDate")), "", info, best.get("tourPageUrl", ""))
-        found.append(dict(kind="tour", origin="MOW", dest=cname, label=cname,
+        found.append(dict(kind="tour", origin="MOW", dest=dest_key, label=cname, src=SRC,
             price_two=total, transfers=0, depart=str(best.get("checkinDate")), ret="",
             info=info, url=best.get("tourPageUrl", ""), median=med))
     con.commit()
@@ -450,10 +466,16 @@ def build_map(flights, tours, chains=None):
         home = oname(CFG.get("home", "AER"))
         L.append("\n━━ 🏨 ПАКЕТНЫЕ ТУРЫ (перелёт+отель+трансфер) ━━")
         L.append(f"   в цене РЕАЛЬНЫЕ билеты {home}⇄Москва под даты тура")
-        for t in sorted(tours, key=lambda x: x["price_two"]):
+        best_by = {}                          # min по стране среди источников
+        for t in tours:
+            if (t["label"] not in best_by
+                    or t["price_two"] < best_by[t["label"]]["price_two"]):
+                best_by[t["label"]] = t
+        for t in sorted(best_by.values(), key=lambda x: x["price_two"]):
             emj, _, _ = season_state(TOUR_DEST.get(t["label"], ""))
+            src = f" · {t['src']}" if t.get("src") else ""
             L.append(f"{emj} {t['label']:<13}{rub(t['price_two']):>10}  "
-                     f"{arrow(t['price_two'], t['median'])}")
+                     f"{arrow(t['price_two'], t['median'])}{src}")
     if chains:
         L.append("\n━━ 🧩 СОСТАВНЫЕ МАРШРУТЫ (оценка по плечам) ━━")
         for c in sorted(chains, key=lambda x: x["price_two"]):
@@ -552,7 +574,9 @@ def find_highlights(items):
             continue                       # составные — оценка, не алертим
         if mode == "comfort" and x["kind"].startswith("flight") and not row_is_comfort(x):
             continue
-        k = ("tour" if x["kind"] == "tour" else "flight", x["origin"], x["dest"])
+        # туры схлопываем по стране (между источниками), перелёты — по маршруту
+        k = ("tour", x["label"]) if x["kind"] == "tour" \
+            else ("flight", x["origin"], x["dest"])
         if k not in best or x["price_two"] < best[k]["price_two"]:
             best[k] = x
     hot = []
@@ -567,7 +591,10 @@ def find_highlights(items):
 
 def fmt_highlight(x, with_url=True):
     pax = CFG.get("passengers", 2)
-    what = "🏨 пакетный тур" if x["kind"] == "tour" else "✈️ перелёт туда-обратно"
+    if x["kind"] == "tour":
+        what = "🏨 пакетный тур" + (f" ({x['src']})" if x.get("src") else "")
+    else:
+        what = "✈️ перелёт туда-обратно"
     head = f"{x.get('tier','🟢')} {oname(x['origin'])} → {x['label']} · {what}"
     price = f"{rub(x['price_two'])} на {pax} чел"
     med = x.get("median")

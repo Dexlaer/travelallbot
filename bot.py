@@ -126,6 +126,10 @@ def latest_rows():
     for r in con.execute(q):
         d = dict(kind=r[0], origin=r[1], dest=r[2], label=r[3], price_two=r[4],
                  transfers=r[5], depart=r[6], ret=r[7], info=r[8], url=r[9], ts=r[10])
+        if d["kind"] == "tour":
+            if "#" not in d["dest"]:
+                continue                      # легаси-строки до мульти-источников
+            d["src"] = d["dest"].split("#", 1)[1]
         d["median"] = hunter.median_before(con, d["kind"], d["origin"], d["dest"])
         rows.append(d)
     return rows
@@ -381,7 +385,9 @@ def auto_alerts(items, con):
                     cand.append(x); break
     out, seen = [], set()
     for x in sorted(cand, key=lambda z: z["price_two"]):
-        key = f"{x['origin']}-{x['dest']}-{'tour' if x['kind']=='tour' else 'flight'}"
+        # туры дедупим по стране (не по источнику), перелёты — по маршруту
+        key = (f"tour-{x['label']}" if x["kind"] == "tour"
+               else f"{x['origin']}-{x['dest']}-flight")
         if key in seen: continue
         seen.add(key)
         prev = con.execute("SELECT price FROM alerted WHERE key=?", (key,)).fetchone()

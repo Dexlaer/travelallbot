@@ -5,8 +5,11 @@ bot.py — travel-hunter в Telegram: кнопки, настройки, авто
 Запуск:  python3 bot.py  (или двойной клик по start.command)
 """
 
-import time, json, datetime, urllib.request, urllib.parse, traceback
+import os, time, json, uuid, datetime, urllib.request, urllib.parse, traceback
 import hunter
+
+LOGO = os.path.join(hunter.BASE, "logo.png")
+_logo_file_id = None   # после первой загрузки шлём по file_id (быстро)
 
 TG    = hunter.TG_TOKEN
 OWNER = str(hunter.SEC.get("telegram_chat_id", ""))
@@ -64,6 +67,35 @@ def send(chat, text, kb=None):
 
 def answer_cb(cb_id, text=""):
     api("answerCallbackQuery", callback_query_id=cb_id, text=text)
+
+def send_logo(chat, caption=""):
+    """шлёт логотип: первый раз загружает файл, дальше — по file_id"""
+    global _logo_file_id
+    if _logo_file_id:
+        api("sendPhoto", chat_id=chat, photo=_logo_file_id, caption=caption)
+        return
+    if not os.path.exists(LOGO):
+        return
+    try:
+        with open(LOGO, "rb") as f:
+            img = f.read()
+        b = uuid.uuid4().hex
+        body = b""
+        for name, value in (("chat_id", str(chat)), ("caption", caption)):
+            if value:
+                body += (f"--{b}\r\nContent-Disposition: form-data; "
+                         f"name=\"{name}\"\r\n\r\n{value}\r\n").encode()
+        body += (f"--{b}\r\nContent-Disposition: form-data; name=\"photo\"; "
+                 f"filename=\"logo.png\"\r\nContent-Type: image/png\r\n\r\n").encode()
+        body += img + f"\r\n--{b}--\r\n".encode()
+        req = urllib.request.Request(f"{API}/sendPhoto", data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={b}"})
+        resp = json.load(urllib.request.urlopen(req, timeout=60))
+        photos = (resp.get("result") or {}).get("photo") or []
+        if photos:
+            _logo_file_id = photos[-1].get("file_id")
+    except Exception as e:
+        print("logo err", e)
 
 def ikb(rows):
     return json.dumps({"inline_keyboard":
@@ -284,6 +316,8 @@ def handle_text(chat, t):
     elif t == "⚙️ Настройки" or low == "settings":
         send(chat, settings_text(), kb=settings_kb())
     elif t == "❓ Помощь" or low in ("help", "start"):
+        if low == "start":
+            send_logo(chat, caption="🏝 Travel Hunter — охотник за выгодными поездками")
         send(chat, HELP, kb=MAIN_KB)
     else:
         send(chat, "Жми кнопки внизу 👇", kb=MAIN_KB)

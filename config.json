@@ -1,0 +1,77 @@
+{
+  "origins": [
+    "AER",
+    "MRV"
+  ],
+  "destinations": [
+    "BKK",
+    "HKT",
+    "DPS",
+    "CXR",
+    "SGN",
+    "HAN",
+    "PQC",
+    "GOI",
+    "DEL",
+    "CMB",
+    "MLE",
+    "KUL",
+    "KTM"
+  ],
+  "passengers": 2,
+  "max_transfers": 2,
+  "currency": "rub",
+  "marker": "737889",
+  "home": "AER",
+  "when": {
+    "from": "2026-06-10",
+    "to": "2026-08-31"
+  },
+  "comfort_mode": "comfort",
+  "max_leg_hours": 16,
+  "budget": {
+    "fire": 150000,
+    "ok": 200000
+  },
+  "hotel_per_night_two": 4500,
+  "est_nights": 10,
+  "drop_vs_median_pct": 12,
+  "check_every_hours": 6,
+  "chains": [
+    [
+      "AER",
+      "AUH",
+      "BKK",
+      "AER"
+    ],
+    [
+      "AER",
+      "DXB",
+      "BKK",
+      "AER"
+    ],
+    [
+      "AER",
+      "AUH",
+      "BKK",
+      "CXR",
+      "AER"
+    ]
+  ],
+  "tours": {
+    "enabled": true,
+    "departure_city_id": 2,
+    "transfer_to_moscow_two": 12000,
+    "min_rating": 4.0,
+    "nights_from": 7,
+    "nights_to": 12,
+    "countries": {
+      "Таиланд": 87,
+      "Бали": 34,
+      "Индия/Гоа": 33,
+      "Мальдивы": 56,
+      "Шри-Ланка": 110,
+      "Филиппины": 97
+    }
+  }
+}

@@ -1,0 +1,7 @@
+# секреты и данные — НЕ коммитить
+secrets.json
+*.db
+prices.db
+__pycache__/
+*.pyc
+.DS_Store

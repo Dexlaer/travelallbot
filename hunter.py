@@ -241,6 +241,37 @@ def feeder_flight(checkin_str, nights, pax):
     info = f"{rub(price)} ({d[5:]}→{r[5:]}{dur_s})"
     return price, info
 
+def recheck_tour(cid, t, pax, offer):
+    """перепроверка подозрительно дешёвого тура: повторяем точечный запрос
+       (тот же отель, дата заезда, ночи) — повторилось свежим = похоже на правду"""
+    ci = str(offer.get("checkinDate") or "")
+    nights = offer.get("nights")
+    hid = offer.get("hotelId")
+    if not (ci and nights and hid):
+        return False
+    url = ("https://api-gateway.travelata.ru/statistic/cheapestTours"
+           f"?countries[]={cid}&departureCity={t.get('departure_city_id',2)}"
+           f"&nightRange[from]={nights}&nightRange[to]={nights}"
+           f"&touristGroup[adults]={pax}&touristGroup[kids]=0&touristGroup[infants]=0"
+           f"&checkInDateRange[from]={ci}&checkInDateRange[to]={ci}")
+    try:
+        data = http_get(url).get("data", [])
+    except Exception:
+        return False
+    now = datetime.datetime.now()
+    for x in data:
+        if x.get("hotelId") != hid or not x.get("price"):
+            continue
+        if abs(x["price"] - offer["price"]) / offer["price"] > 0.2:
+            continue
+        pub = x.get("publishedAt")
+        try:
+            if pub and (now - datetime.datetime.fromisoformat(pub)).total_seconds() <= 6 * 3600:
+                return True
+        except ValueError:
+            pass
+    return False
+
 # ---- скан туров (Travelata): только приличные отели ----
 def scan_tours(con):
     t = CFG.get("tours", {})
@@ -272,13 +303,12 @@ def scan_tours(con):
         except Exception as e:
             print(f"  ! тур {cname}: ошибка запроса ({e})"); continue
         # NB: поле expired у Travelata-кэша всегда в прошлом (живут ~час) —
-        # фильтровать по нему нельзя, иначе отсечётся всё. Фильтруем по
-        # свежести публикации и правдоподобию цены (фантомы/«только отель»).
+        # фильтровать по нему нельзя. Берём свежеопубликованное (<24ч);
+        # подозрительно дешёвое не выкидываем, а ПЕРЕПРОВЕРЯЕМ точечным
+        # запросом — подтвердилось = горящее ⚡️, нет = фантом.
         now = datetime.datetime.now()
         floor = float(t.get("min_plausible_per_person", 30000)) * pax
-        def alive(x):
-            if not x.get("price") or x["price"] < floor:
-                return False
+        def fresh_pub(x):
             pub = x.get("publishedAt")
             if pub:
                 try:
@@ -287,13 +317,32 @@ def scan_tours(con):
                 except ValueError:
                     pass
             return True
-        data = [x for x in data if alive(x)]
+        data = [x for x in data if x.get("price") and fresh_pub(x)]
         if not data:
             continue
-        good = [x for x in data
-                if float(x.get("hotelRating") or 0) >= min_rating
-                and int(x.get("hotelCategory") or 0) >= 3]
-        best = min(good or data, key=lambda x: x["price"])
+        normal = [x for x in data if x["price"] >= floor]
+        susp = sorted([x for x in data if x["price"] < floor], key=lambda x: x["price"])
+        # горящее = подозрительно дёшево, НО не мусор: не дешевле 40% медианы
+        # рынка этой страны (отсекает «только отель» за 3тр) + воспроизводится
+        # свежим точечным запросом (отсекает протухшие записи)
+        batch_med = statistics.median([x["price"] for x in data])
+        hot = [x for x in susp[:2]
+               if x["price"] >= batch_med * 0.4 and recheck_tour(cid, t, pax, x)]
+        note = ""
+        if hot:
+            best = min(hot, key=lambda x: x["price"])
+            note = " ⚡️ГОРЯЩЕЕ: аномально дёшево, перепроверил — повторяется"
+        else:
+            if susp:
+                print(f"  · {cname}: фантом отсеян ({rub(susp[0]['price'])}, не подтвердился)")
+            if not normal:
+                continue
+            good = [x for x in normal
+                    if float(x.get("hotelRating") or 0) >= min_rating
+                    and int(x.get("hotelCategory") or 0) >= 3]
+            best = min(good or normal, key=lambda x: x["price"])
+            if not good:
+                note = " ⚠️отель так себе"
         # реальный подлёт из дома (Сочи) под даты этого тура
         fp, finfo = feeder_flight(best.get("checkinDate"), best.get("nights"), pax)
         if fp:
@@ -303,7 +352,6 @@ def scan_tours(con):
             est = int(addon / 2 * pax)
             total = best["price"] + est
             add_str = f"подлёт ≈{rub(est)} (билеты под даты не нашлись)"
-        note = "" if good else " ⚠️отель так себе"
         info = (f"{best.get('hotelCategoryName','')} {(best.get('hotelName') or '')[:20]}"
                 f" ★{str(best.get('hotelRating') or '?')[:3]}, {best.get('nights')}н"
                 f" (тур {rub(best['price'])} + {add_str}){note}")

@@ -502,11 +502,13 @@ def find_highlights(items):
     return hot
 
 def fmt_highlight(x, with_url=True):
+    pax = CFG.get("passengers", 2)
     what = "🏨 пакетный тур" if x["kind"] == "tour" else "✈️ перелёт"
     head = f"{x.get('tier','🟢')} {oname(x['origin'])} → {x['label']} · {what}"
-    price = rub(x["price_two"])
-    if x.get("median"):
-        price += f"  (обычно ~{rub(x['median'])})"
+    price = f"{rub(x['price_two'])} на {pax} чел"
+    med = x.get("median")
+    if med and abs(x["price_two"] - med) / med >= 0.03:
+        price += f"  (обычно ~{rub(med)})"
     when = f"{x['depart']}" + (f" → {x['ret']}" if x.get("ret") else "")
     parts = [head, price, f"📅 {when} · {x['info']}"]
     if x["kind"] != "tour":

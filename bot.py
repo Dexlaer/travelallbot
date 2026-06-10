@@ -142,6 +142,24 @@ def map_text():
         return "Данных пока нет — нажми 🔎 Обновить."
     return hunter.build_map(flights, tours, chains)
 
+def send_map(chat):
+    """карта + кнопки «смотреть» на всё, что помечено 🟢 дёшево"""
+    flights, tours, _ = _groups()
+    rows = []
+    for x in sorted(flights + tours, key=lambda z: z["price_two"]):
+        if x["kind"] == "flightc" or not x.get("url"):
+            continue
+        if not hunter.arrow(x["price_two"], x.get("median")).startswith("🟢"):
+            continue
+        if x["kind"] == "tour":
+            rows.append([(f"🟢 тур {x['label']} · {hunter.rub(x['price_two'])}", x["url"])])
+        else:
+            rows.append([(f"🟢 {x['label']} из {hunter.oname(x['origin'])} · "
+                          f"{hunter.rub(x['price_two'])}", x["url"])])
+        if len(rows) >= 6:
+            break
+    send(chat, map_text(), kb=(ukb(rows) if rows else MAIN_KB))
+
 def send_whereto(chat):
     flights, tours, _ = _groups()
     if not flights:
@@ -300,7 +318,7 @@ def handle_text(chat, t):
     if t == "🎯 Куда лететь" or low == "go":
         send_whereto(chat)
     elif t == "🗺 Карта цен" or low == "map":
-        send(chat, map_text(), kb=MAIN_KB)
+        send_map(chat)
     elif t == "🔥 Лучшее" or low == "best":
         send_best(chat)
     elif t == "🧩 Составной маршрут" or low == "chains":
@@ -308,7 +326,7 @@ def handle_text(chat, t):
     elif t == "🔎 Обновить" or low == "scan":
         send(chat, "🔎 Сканирую: перелёты + туры + составные, ~1 мин…")
         do_scan()
-        send(chat, map_text(), kb=MAIN_KB)
+        send_map(chat)
     elif t == "👀 Следить за…" or low == "watch":
         send_watch_menu(chat)
     elif t == "📋 Мои подписки" or low == "list":

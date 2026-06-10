@@ -5,3 +5,7 @@ prices.db
 __pycache__/
 *.pyc
 .DS_Store
+
+# конфиг меняется ботом на месте — не трекаем (шаблон: config.json.example)
+config.json
+*.png

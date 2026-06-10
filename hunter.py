@@ -271,7 +271,23 @@ def scan_tours(con):
             data = http_get(url).get("data", [])
         except Exception as e:
             print(f"  ! тур {cname}: ошибка запроса ({e})"); continue
-        data = [x for x in data if x.get("price")]
+        # NB: поле expired у Travelata-кэша всегда в прошлом (живут ~час) —
+        # фильтровать по нему нельзя, иначе отсечётся всё. Фильтруем по
+        # свежести публикации и правдоподобию цены (фантомы/«только отель»).
+        now = datetime.datetime.now()
+        floor = float(t.get("min_plausible_per_person", 30000)) * pax
+        def alive(x):
+            if not x.get("price") or x["price"] < floor:
+                return False
+            pub = x.get("publishedAt")
+            if pub:
+                try:
+                    if (now - datetime.datetime.fromisoformat(pub)).total_seconds() > 24 * 3600:
+                        return False
+                except ValueError:
+                    pass
+            return True
+        data = [x for x in data if alive(x)]
         if not data:
             continue
         good = [x for x in data
@@ -516,6 +532,8 @@ def fmt_highlight(x, with_url=True):
     parts = [head, price, f"📅 {when} · {x['info']}"]
     if x["kind"] != "tour":
         parts.append(f"≈ поездка целиком с отелем: {rub(trip_total(x['price_two']))}")
+    else:
+        parts.append("⏳ цены туров живут считанные часы — открывай и проверяй сразу")
     emj, slabel, now = season_state(x["dest"] if x["kind"] != "tour"
                                     else TOUR_DEST.get(x["label"], ""))
     if slabel:

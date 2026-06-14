@@ -146,21 +146,31 @@ def map_text():
         return "Данных пока нет — нажми 🔎 Обновить."
     return hunter.build_map(flights, tours, chains)
 
+def _link_passes(x):
+    """попадает ли вариант под текущий фильтр кнопок-ссылок"""
+    mode = hunter.CFG.get("link_filter", "top")
+    if mode == "deal":          # только выгодные по истории
+        return hunter.arrow(x["price_two"], x.get("median")).startswith("🟢")
+    if mode == "price":         # дешевле моего порога
+        return x["price_two"] <= hunter.CFG.get("link_price_max", 120000)
+    return True                 # "top" — дешёвые в целом (берём первые по возрастанию)
+
 def send_map(chat):
-    """карта + кнопки «смотреть» на всё, что помечено 🟢 дёшево"""
+    """карта + кнопки «смотреть» по выбранному фильтру (⚙️ Ссылки)"""
     flights, tours, _ = _groups()
     rows = []
     for x in sorted(flights + tours, key=lambda z: z["price_two"]):
         if x["kind"] == "flightc" or not x.get("url"):
             continue
-        if not hunter.arrow(x["price_two"], x.get("median")).startswith("🟢"):
+        if not _link_passes(x):
             continue
+        mark = "🟢" if hunter.arrow(x["price_two"], x.get("median")).startswith("🟢") else "✈️"
         if x["kind"] == "tour":
-            rows.append([(f"🟢 тур {x['label']} · {hunter.rub(x['price_two'])}", x["url"])])
+            rows.append([(f"🏨 {x['label']} · {hunter.rub(x['price_two'])}", x["url"])])
         else:
-            rows.append([(f"🟢 {x['label']} из {hunter.oname(x['origin'])} · "
+            rows.append([(f"{mark} {x['label']} из {hunter.oname(x['origin'])} · "
                           f"{hunter.rub(x['price_two'])}", x["url"])])
-        if len(rows) >= 6:
+        if len(rows) >= 8:
             break
     send(chat, map_text(), kb=(ukb(rows) if rows else MAIN_KB))
 
@@ -237,12 +247,18 @@ def settings_text():
             if c.get("comfort_mode", "comfort") == "comfort"
             else "💸 любые, лишь бы дёшево")
     home = hunter.oname(c.get("home", "AER"))
+    freq = c.get("check_every_hours", 6)
+    lf = c.get("link_filter", "top")
+    lf_txt = {"top": "дешёвые в целом", "deal": "выгодные по истории",
+              "price": f"дешевле {hunter.rub(c.get('link_price_max', 120000))}"}.get(lf, lf)
     return (f"⚙️ НАСТРОЙКИ\n\n"
             f"🏠 Точка старта: {home} — всё считаю от неё,\n"
             f"   к турам из Москвы добавляю реальные билеты {home}⇄МСК\n"
             f"👤 Людей: {c.get('passengers', 2)}\n"
             f"📅 Когда вылет: {when}\n"
             f"✈️ Перелёты: {mode}\n"
+            f"⏱ Опрос цен: каждые {freq} ч\n"
+            f"🔗 Кнопки-ссылки: {lf_txt}\n"
             f"💰 Бюджет: 🔥<{hunter.rub(c['budget']['fire'])} · "
             f"потолок {hunter.rub(c['budget']['ok'])}\n\n"
             f"Что поменять — жми:")
@@ -255,8 +271,15 @@ def settings_kb():
         [("📅 Любые даты", "set:when:any")],
         [("☀️ Лето", "set:when:summer"), ("🍂 Осень", "set:when:autumn")],
         [("❄️ Зима", "set:when:winter"), ("🌸 Весна", "set:when:spring")],
-        [("🛋 Только удобные перелёты", "set:mode:comfort")],
-        [("💸 Любые, лишь бы дёшево", "set:mode:any")],
+        [("🛋 Удобные перелёты", "set:mode:comfort"),
+         ("💸 Любые дешёвые", "set:mode:any")],
+        [("⏱ Опрос 3ч", "set:freq:3"), ("6ч", "set:freq:6"),
+         ("12ч", "set:freq:12"), ("24ч", "set:freq:24")],
+        [("🔗 Ссылки: дешёвые в целом", "set:link:top")],
+        [("🔗 Ссылки: выгодные по истории", "set:link:deal")],
+        [("🔗 Ссылки: по моей цене →", "set:link:price")],
+        [("💰 ≤80к", "set:linkprice:80000"), ("≤100к", "set:linkprice:100000"),
+         ("≤120к", "set:linkprice:120000"), ("≤150к", "set:linkprice:150000")],
     ])
 
 def apply_setting(what, val):
@@ -274,6 +297,19 @@ def apply_setting(what, val):
         c["comfort_mode"] = val
         msg = ("🛋 Показываю удобные перелёты (≤1 пересадка, без долгих стыковок)."
                if val == "comfort" else "💸 Показываю самые дешёвые, даже жёсткие.")
+    elif what == "freq":
+        c["check_every_hours"] = int(val)
+        msg = f"⏱ Буду опрашивать цены каждые {val} ч (применится сразу, без перезапуска)."
+    elif what == "link":
+        c["link_filter"] = val
+        names = {"top": "на дешёвые в целом", "deal": "только на выгодные по истории",
+                 "price": f"на всё дешевле {hunter.rub(c.get('link_price_max', 120000))}"}
+        msg = (f"🔗 Кнопки-ссылки теперь {names.get(val, val)}."
+               + (" Порог меняй кнопками 💰 ниже." if val == "price" else ""))
+    elif what == "linkprice":
+        c["link_price_max"] = int(val)
+        c["link_filter"] = "price"
+        msg = f"🔗 Показываю ссылки на билеты дешевле {hunter.rub(int(val))}."
     elif what == "when":
         if val == "any":
             c["when"] = {"from": "", "to": ""}
@@ -399,14 +435,15 @@ def auto_alerts(items, con):
 # ---------- главный цикл ----------
 def main():
     ensure_tables()
-    print(f"bot запущен. Автоскан каждые {SCAN_EVERY//3600} ч. Жду нажатия кнопок…")
+    print(f"bot запущен. Автоскан каждые {hunter.CFG.get('check_every_hours',6)} ч. Жду кнопок…")
     if OWNER:
         send(OWNER, "🤖 Я на связи! Жми кнопки внизу 👇\n"
-                    "Новое: 🧩 составные маршруты и ⚙️ настройки "
-                    "(когда лететь, сколько людей, удобство перелётов).", kb=MAIN_KB)
+                    "Новое в ⚙️: частота опроса и фильтр кнопок-ссылок "
+                    "(дешёвые в целом / по истории / по моей цене).", kb=MAIN_KB)
     offset, last_scan = None, time.time()
     while True:
-        if time.time() - last_scan > SCAN_EVERY:
+        scan_every = hunter.CFG.get("check_every_hours", 6) * 3600   # живо читаем настройку
+        if time.time() - last_scan > scan_every:
             try:
                 con = ensure_tables()
                 for x in auto_alerts(do_scan(), con):

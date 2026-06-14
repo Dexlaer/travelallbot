@@ -78,5 +78,7 @@
       "MRV": 44,
       "MOW": 2
     }
-  }
+  },
+  "link_filter": "top",
+  "link_price_max": 120000
 }
